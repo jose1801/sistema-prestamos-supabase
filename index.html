@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestión de Préstamos & Cobranzas</title>
+    <!-- Supabase JS Client (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/receipt.css">
+</head>
+<body>
+
+    <!-- CONTENEDOR DE AUTENTICACIÓN / LOGIN -->
+    <div id="auth-container" class="auth-wrapper">
+        <div class="auth-card">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: var(--accent); font-size: 1.8rem; font-weight: 800; letter-spacing: -0.5px;">💰 CREDISYS</h1>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">Sistema de Préstamos & Cobranzas</p>
+            </div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-user">Usuario / Email</label>
+                    <input type="text" id="login-user" class="form-control" value="admin@sistema.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-pass">Contraseña</label>
+                    <div style="position: relative;">
+                        <input type="password" id="login-pass" class="form-control" value="admin123" required style="padding-right: 40px;">
+                        <button type="button" id="toggle-password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem;">👁️</button>
+                    </div>
+                </div>
+                <div id="login-error" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 12px; display: none;"></div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 10px;">Iniciar Sesión</button>
+            </form>
+            <div style="margin-top: 20px; text-align: center; font-size: 0.75rem; color: var(--text-muted);">
+                Modo Demostración / Conexión Directa Supabase
+            </div>
+        </div>
+    </div>
+
+    <!-- SIDEBAR DE NAVEGACIÓN -->
+    <aside id="sidebar">
+        <div class="brand">
+            <span>💰 CREDISYS</span>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="#" data-target="view-dashboard" class="nav-link active">🏠 Dashboard</a></li>
+            <li><a href="#" data-target="view-clientes" class="nav-link">👥 Clientes</a></li>
+            <li><a href="#" data-target="view-prestamos" class="nav-link">💰 Préstamos</a></li>
+            <li><a href="#" data-target="view-pagos" class="nav-link">💵 Pagos</a></li>
+            <li><a href="#" data-target="view-recibos" class="nav-link">🧾 Recibos</a></li>
+            <li><a href="#" data-target="view-auditoria" class="nav-link">🔎 Auditoría</a></li>
+        </ul>
+        <div style="padding: 15px; border-top: 1px solid var(--border-color); margin-top: auto; font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+            v1.0.0 Frontend Supabase
+        </div>
+    </aside>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <div id="main-content">
+        <header class="top-header">
+            <button class="toggle-menu" id="toggle-menu">☰</button>
+            <div class="user-profile">
+                <span id="user-display-name">⚡ Administrador</span>
+                <button class="btn-logout" id="btn-logout">Cerrar Sesión</button>
+            </div>
+        </header>
+
+        <main class="content-body">
+            <!-- DASHBOARD VIEW -->
+            <section id="view-dashboard" class="view-page active">
+                <h2 style="margin-bottom: 20px;">Dashboard Administrativo</h2>
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="title">Clientes</div>
+                        <div class="value" id="kpi-clientes">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="title">Préstamos Activos</div>
+                        <div class="value" id="kpi-prestamos">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="title">Total Prestado</div>
+                        <div class="value" id="kpi-prestado">$0.00</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="title">Total Cobrado</div>
+                        <div class="value" id="kpi-cobrado">$0.00</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="title">Saldo Pendiente</div>
+                        <div class="value" id="kpi-pendiente">$0.00</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-widgets">
+                    <div class="widget-card">
+                        <h3>Próximos Vencimientos de Cuotas</h3>
+                        <div class="table-container" style="margin-top: 15px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Préstamo</th>
+                                        <th>Cuota #</th>
+                                        <th>Monto</th>
+                                        <th>Vencimiento</th>
+                                        <th>Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="widget-vencimientos">
+                                    <tr><td colspan="5" style="text-align:center;">Cargando vencimientos...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CLIENTES VIEW -->
+            <section id="view-clientes" class="view-page">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <h2>Gestión de Clientes</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="search-clientes" class="form-control" placeholder="Buscar cliente o cédula..." style="width: 250px;">
+                        <button class="btn btn-primary" onclick="ClientesModule.openModal()">+ Nuevo Cliente</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Cédula</th>
+                                <th>Nombre Completo</th>
+                                <th>Teléfono</th>
+                                <th>Dirección</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-clientes">
+                            <tr><td colspan="6" style="text-align:center;">Cargando clientes...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- PRESTAMOS VIEW -->
+            <section id="view-prestamos" class="view-page">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <h2>Gestión de Préstamos</h2>
+                    <button class="btn btn-primary" onclick="PrestamosModule.openModal()">+ Nuevo Préstamo</button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Cliente</th>
+                                <th>Monto</th>
+                                <th>Tasa (%)</th>
+                                <th>Total Pagar</th>
+                                <th>Saldo Restante</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-prestamos">
+                            <tr><td colspan="8" style="text-align:center;">Cargando préstamos...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- PAGOS VIEW -->
+            <section id="view-pagos" class="view-page">
+                <h2>Registrar Cobro / Pago de Cuota</h2>
+                <div class="widget-card" style="max-width: 600px; margin-top: 20px;">
+                    <form id="form-pago">
+                        <div class="form-group">
+                            <label for="pago-prestamo-id">Seleccionar Préstamo Activo</label>
+                            <select id="pago-prestamo-id" class="form-control" required onchange="PagosModule.onPrestamoChange()">
+                                <option value="">Seleccione préstamo...</option>
+                            </select>
+                        </div>
+                        <div id="pago-detalles-cuota" style="margin-bottom: 15px; background: var(--bg-main); padding: 12px; border-radius: var(--radius-sm); display: none;"></div>
+                        <div class="form-group">
+                            <label for="pago-monto">Monto A Pagar ($)</label>
+                            <input type="number" step="0.01" id="pago-monto" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="pago-metodo">Método de Pago</label>
+                            <select id="pago-metodo" class="form-control">
+                                <option value="Efectivo">Efectivo</option>
+                                <option value="Transferencia">Transferencia Bancaria</option>
+                                <option value="Otro">Otro / Depósito</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="pago-observaciones">Observaciones / Nota</label>
+                            <input type="text" id="pago-observaciones" class="form-control" placeholder="Opcional">
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">Procesar Pago y Generar Recibo</button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- RECIBOS VIEW -->
+            <section id="view-recibos" class="view-page">
+                <h2>Emisión y Visualización de Recibos</h2>
+                <div style="margin-top: 15px; margin-bottom: 20px;" class="no-print">
+                    <label>Buscar / Seleccionar Recibo Registrado:</label>
+                    <select id="select-recibos-lista" class="form-control" style="max-width: 400px; display: inline-block; margin-left: 10px;" onchange="RecibosModule.onSelectReciboChange()">
+                        <option value="">Seleccione un recibo...</option>
+                    </select>
+                </div>
+
+                <div id="printable-receipt" style="margin-top: 20px;">
+                    <div class="receipt-box">
+                        <div class="receipt-header">
+                            <h2>SISTEMA PRESTAMOS</h2>
+                            <p>COMPROBANTE DE PAGO</p>
+                        </div>
+                        <div class="receipt-divider"></div>
+                        <div id="receipt-content">
+                            <p style="text-align: center; color: #666;">Seleccione un pago registrado para ver su recibo correspondiente.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin-top: 20px;" class="no-print">
+                    <button class="btn btn-primary" onclick="window.print()">🖨️ Imprimir Recibo</button>
+                </div>
+            </section>
+
+            <!-- AUDITORIA VIEW -->
+            <section id="view-auditoria" class="view-page">
+                <h2>Bitácora de Auditoría del Sistema</h2>
+                <div class="table-container" style="margin-top: 20px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Acción</th>
+                                <th>Módulo</th>
+                                <th>Detalle / Registro</th>
+                                <th>Fecha y Hora</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbl-auditoria">
+                            <tr><td colspan="5" style="text-align:center;">Cargando registros de auditoría...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODAL NUEVO/EDITAR CLIENTE -->
+    <div id="modal-cliente" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="modal-cliente-title">Cliente</h3>
+                <button onclick="ClientesModule.closeModal()" style="background:none; border:none; color:white; cursor:pointer; font-size:1.2rem;">✕</button>
+            </div>
+            <form id="form-cliente">
+                <input type="hidden" id="cli-id">
+                <div class="form-group">
+                    <label>Nombre Completo</label>
+                    <input type="text" id="cli-nombre" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Identificación / Cédula</label>
+                    <input type="text" id="cli-cedula" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Teléfono</label>
+                    <input type="text" id="cli-telefono" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Dirección</label>
+                    <input type="text" id="cli-direccion" class="form-control">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%; margin-top:10px;">Guardar Cliente</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL NUEVO PRÉSTAMO -->
+    <div id="modal-prestamo" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Nuevo Préstamo</h3>
+                <button onclick="PrestamosModule.closeModal()" style="background:none; border:none; color:white; cursor:pointer; font-size:1.2rem;">✕</button>
+            </div>
+            <form id="form-prestamo">
+                <div class="form-group">
+                    <label for="pres-cliente-id">Cliente</label>
+                    <select id="pres-cliente-id" class="form-control" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="pres-monto">Monto Capital ($)</label>
+                    <input type="number" step="0.01" id="pres-monto" class="form-control" value="500" required oninput="PrestamosModule.calcularAmortizacion()">
+                </div>
+                <div class="form-group">
+                    <label for="pres-interes">Porcentaje de Interés Total (%)</label>
+                    <input type="number" step="0.1" id="pres-interes" class="form-control" value="10" required oninput="PrestamosModule.calcularAmortizacion()">
+                </div>
+                <div class="form-group">
+                    <label for="pres-cuotas">Número de Cuotas</label>
+                    <input type="number" id="pres-cuotas" class="form-control" value="4" required oninput="PrestamosModule.calcularAmortizacion()">
+                </div>
+                <div class="form-group">
+                    <label for="pres-frecuencia">Frecuencia de Pago</label>
+                    <select id="pres-frecuencia" class="form-control" onchange="PrestamosModule.calcularAmortizacion()">
+                        <option value="Semanal">Semanal</option>
+                        <option value="Quincenal">Quincenal</option>
+                        <option value="Mensual">Mensual</option>
+                    </select>
+                </div>
+                
+                <div id="amortizacion-preview" style="background: var(--bg-main); padding: 15px; border-radius: var(--radius-sm); margin: 15px 0; border: 1px solid var(--border-color);">
+                    <!-- Cronograma previo calculado dinámicamente -->
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="width:100%;">Registrar y Otorgar Préstamo</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL DETALLE DE PRÉSTAMO / CRONOGRAMA -->
+    <div id="modal-prestamo-detalle" class="modal-overlay">
+        <div class="modal-card" style="max-width: 750px;">
+            <div class="modal-header">
+                <h3 id="modal-detalle-codigo">Detalle del Préstamo</h3>
+                <button onclick="PrestamosModule.closeDetalleModal()" style="background:none; border:none; color:white; cursor:pointer; font-size:1.2rem;">✕</button>
+            </div>
+            <div id="detalle-prestamo-info" style="margin-bottom: 20px;"></div>
+            <h4>Tabla de Amortización / Cuotas</h4>
+            <div class="table-container" style="margin-top: 10px; max-height: 300px; overflow-y: auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th># Cuota</th>
+                            <th>Fecha Vencimiento</th>
+                            <th>Valor Cuota</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-detalle-cuotas"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTENEDOR DE TOAST NOTIFICATIONS -->
+    <div id="toast-container"></div>
+
+    <!-- SCRIPTS -->
+    <script src="js/storage.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/clientes.js"></script>
+    <script src="js/prestamos.js"></script>
+    <script src="js/pagos.js"></script>
+    <script src="js/recibos.js"></script>
+    <script src="js/auditoria.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
