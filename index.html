@@ -217,15 +217,51 @@
                     </select>
                 </div>
 
-                <div id="printable-receipt" style="margin-top: 20px;">
-                    <div class="receipt-box">
-                        <div class="receipt-header">
-                            <h2>SISTEMA PRESTAMOS</h2>
-                            <p>COMPROBANTE DE PAGO</p>
-                        </div>
-                        <div class="receipt-divider"></div>
+                <!-- TICKET COMPROBANTE ESTILIZADO -->
+                <div id="printable-receipt" style="margin-top: 20px; display: flex; justify-content: center;">
+                    <div class="receipt-box" style="width: 320px; background: #fff; color: #000; padding: 20px; border: 1px dashed #999; font-family: monospace; font-size: 13px;">
+                        <div style="text-align: center; font-weight: bold; font-size: 1.1rem; margin-bottom: 5px;">SISTEMA PRESTAMOS</div>
+                        <div style="text-align: center; border-bottom: 1px dashed #000; padding-bottom: 8px; margin-bottom: 12px;">COMPROBANTE DE PAGO</div>
+
                         <div id="receipt-content">
-                            <p style="text-align: center; color: #666;">Seleccione un pago registrado para ver su recibo correspondiente.</p>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Fecha:</span>
+                                <span id="recibo-fecha">--</span>
+                            </div>
+                            
+                            <div id="recibo-cliente" style="font-weight: bold; font-size: 14px; margin: 8px 0; text-transform: uppercase;">
+                                Nombre del Cliente
+                            </div>
+
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Valor Venta:</span>
+                                <span id="recibo-valor-venta">$ 0.00</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Valor Pagado:</span>
+                                <span id="recibo-valor-pagado">$ 0.00</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Cuotas Pagadas:</span>
+                                <span id="recibo-cuotas-pagadas">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Cuotas Restantes:</span>
+                                <span id="recibo-cuotas-restantes">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span>Cuotas Atrasadas:</span>
+                                <span id="recibo-cuotas-atrasadas">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-top: 8px; margin-bottom: 4px;">
+                                <span>Sanción:</span>
+                                <span id="recibo-sancion">$ 0.00</span>
+                            </div>
+                            
+                            <div style="display: flex; justify-content: space-between; margin-top: 10px; padding-top: 6px; border-top: 1px solid #000; font-weight: bold; font-size: 14px;">
+                                <span>Nuevo Saldo:</span>
+                                <span id="recibo-nuevo-saldo">$ 0.00</span>
+                            </div>
                         </div>
                     </div>
                 </div>
