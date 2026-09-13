@@ -106,6 +106,8 @@ const StorageModule = (() => {
                     ...p,
                     tasa_interes: parseFloat(p.tasa_interes ?? p.interes_pct ?? 0),
                     interes_pct: parseFloat(p.interes_pct ?? p.tasa_interes ?? 0),
+                    monto_total: parseFloat(p.monto_total ?? p.total ?? p.monto ?? 0),
+                    total: parseFloat(p.total ?? p.monto_total ?? p.monto ?? 0),
                     saldo_restante: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
                     saldo: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
                     cuotas_detalle: p.cuotas || p.cuotas_detalle || []
@@ -135,6 +137,8 @@ const StorageModule = (() => {
                     ...data,
                     tasa_interes: parseFloat(data.tasa_interes ?? data.interes_pct ?? 0),
                     interes_pct: parseFloat(data.interes_pct ?? data.tasa_interes ?? 0),
+                    monto_total: parseFloat(data.monto_total ?? data.total ?? data.monto ?? 0),
+                    total: parseFloat(data.total ?? data.monto_total ?? data.monto ?? 0),
                     saldo_restante: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
                     saldo: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
                     cuotas_detalle: (data.cuotas || []).sort((a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero))
@@ -156,6 +160,8 @@ const StorageModule = (() => {
                     id: newId,
                     tasa_interes: prestamoData.tasa_interes || prestamoData.interes_pct || 0,
                     interes_pct: prestamoData.interes_pct || prestamoData.tasa_interes || 0,
+                    monto_total: saldoCalculado,
+                    total: saldoCalculado,
                     saldo_restante: saldoCalculado,
                     saldo: saldoCalculado,
                     cuotas: cuotasArray,
@@ -169,9 +175,9 @@ const StorageModule = (() => {
 
             try {
                 const tasaVal = prestamoData.tasa_interes || prestamoData.interes_pct || 0;
-                const saldoVal = prestamoData.monto_total || prestamoData.monto || 0;
+                const totalVal = prestamoData.monto_total || prestamoData.monto || 0;
 
-                // 1. Insertar el préstamo en la tabla de Supabase contemplando ambos nombres de columna posibles
+                // 1. Insertar el préstamo asegurando la presencia de alias para evitar restricciones NOT NULL
                 const { data: pres, error: errPres } = await _supabase
                     .from('prestamos')
                     .insert([{
@@ -182,9 +188,10 @@ const StorageModule = (() => {
                         interes_pct: tasaVal,
                         num_cuotas: prestamoData.num_cuotas || prestamoData.plazo_meses || 1,
                         frecuencia: prestamoData.frecuencia,
-                        monto_total: prestamoData.monto_total || prestamoData.monto,
-                        saldo_restante: saldoVal,
-                        saldo: saldoVal,
+                        monto_total: totalVal,
+                        total: totalVal,
+                        saldo_restante: totalVal,
+                        saldo: totalVal,
                         estado: 'Activo'
                     }])
                     .select();
@@ -300,7 +307,7 @@ const StorageModule = (() => {
                         .or(`id.eq.${cuotaId},num_cuota.eq.${cuotaId}`);
                 }
 
-                // 3. Actualizar saldo y estado del préstamo
+                // 3. Actualizar el saldo restante y estado del préstamo
                 const nuevoEstado = nuevoSaldoPrestamo <= 0 ? 'Finalizado' : 'Activo';
                 
                 await _supabase
