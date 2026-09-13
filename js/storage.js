@@ -4,7 +4,7 @@
 
 // CONFIGURACIÓN DE TU PROYECTO SUPABASE
 const SUPABASE_URL = "https://dhyirtkbufmstyhduckx.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRoeWlydGtidWZtc3R5aGR1Y2t4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjYxMzgsImV4cCI6MjEwNDkwMjEzOH0.540N1NHFiIe5Va4jCLv5bN-qLqn-aDQ5gE9DmbizY_8";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRoeWlydGtidWZtc3R5aGR1Yc4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjYxMzgsImV4cCI6MjEwNDkwMjEzOH0.540N1NHFiIe5Va4jCLv5bN-qLqn-aDQ5gE9DmbizY_8";
 
 // Inicializar cliente Supabase oficial desde el CDN si está presente
 let _supabase = null;
@@ -47,7 +47,6 @@ const StorageModule = (() => {
                 let clientes = await this.getClientes();
                 cliente.id = cliente.id || 'CLI-' + Date.now();
                 
-                // Actualizar o insertar según exista el id
                 const index = clientes.findIndex(c => c.id === cliente.id);
                 if (index >= 0) {
                     clientes[index] = { ...clientes[index], ...cliente };
@@ -103,9 +102,10 @@ const StorageModule = (() => {
 
                 if (error) throw error;
 
-                // Homogeneizar la estructura de los datos retornados por Supabase
                 return (data || []).map(p => ({
                     ...p,
+                    tasa_interes: parseFloat(p.tasa_interes ?? p.interes_pct ?? 0),
+                    interes_pct: parseFloat(p.interes_pct ?? p.tasa_interes ?? 0),
                     saldo_restante: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
                     saldo: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
                     cuotas_detalle: p.cuotas || p.cuotas_detalle || []
@@ -133,6 +133,8 @@ const StorageModule = (() => {
 
                 return {
                     ...data,
+                    tasa_interes: parseFloat(data.tasa_interes ?? data.interes_pct ?? 0),
+                    interes_pct: parseFloat(data.interes_pct ?? data.tasa_interes ?? 0),
                     saldo_restante: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
                     saldo: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
                     cuotas_detalle: (data.cuotas || []).sort((a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero))
@@ -147,12 +149,15 @@ const StorageModule = (() => {
             if (useLocalStorage()) {
                 let prestamos = await this.getPrestamos();
                 const newId = prestamoData.id || 'PR-' + Date.now();
+                const saldoCalculado = parseFloat(prestamoData.monto_total || prestamoData.monto || 0);
                 
                 const fullPrestamo = {
                     ...prestamoData,
                     id: newId,
-                    saldo_restante: parseFloat(prestamoData.monto_total || prestamoData.monto || 0),
-                    saldo: parseFloat(prestamoData.monto_total || prestamoData.monto || 0),
+                    tasa_interes: prestamoData.tasa_interes || prestamoData.interes_pct || 0,
+                    interes_pct: prestamoData.interes_pct || prestamoData.tasa_interes || 0,
+                    saldo_restante: saldoCalculado,
+                    saldo: saldoCalculado,
                     cuotas: cuotasArray,
                     cuotas_detalle: cuotasArray
                 };
@@ -163,19 +168,23 @@ const StorageModule = (() => {
             }
 
             try {
-                // 1. Insertar el préstamo en la tabla de Supabase
+                const tasaVal = prestamoData.tasa_interes || prestamoData.interes_pct || 0;
+                const saldoVal = prestamoData.monto_total || prestamoData.monto || 0;
+
+                // 1. Insertar el préstamo en la tabla de Supabase contemplando ambos nombres de columna posibles
                 const { data: pres, error: errPres } = await _supabase
                     .from('prestamos')
                     .insert([{
                         codigo: prestamoData.codigo,
                         cliente_id: prestamoData.cliente_id,
                         monto: prestamoData.monto,
-                        tasa_interes: prestamoData.tasa_interes,
-                        num_cuotas: prestamoData.num_cuotas,
+                        tasa_interes: tasaVal,
+                        interes_pct: tasaVal,
+                        num_cuotas: prestamoData.num_cuotas || prestamoData.plazo_meses || 1,
                         frecuencia: prestamoData.frecuencia,
-                        monto_total: prestamoData.monto_total,
-                        saldo_restante: prestamoData.monto_total,
-                        saldo: prestamoData.monto_total,
+                        monto_total: prestamoData.monto_total || prestamoData.monto,
+                        saldo_restante: saldoVal,
+                        saldo: saldoVal,
                         estado: 'Activo'
                     }])
                     .select();
@@ -229,12 +238,10 @@ const StorageModule = (() => {
 
         async registrarPago(pagoData, cuotaId, nuevoSaldoPrestamo, cuotasActualizadas) {
             if (useLocalStorage()) {
-                // 1. Guardar el pago en LocalStorage
                 let pagos = await this.getPagos();
                 pagos.push(pagoData);
                 localStorage.setItem('sp_pagos', JSON.stringify(pagos));
 
-                // 2. Actualizar el saldo del préstamo y las cuotas locales
                 let prestamos = await this.getPrestamos();
                 let p = prestamos.find(x => String(x.id) === String(pagoData.prestamo_id));
                 
@@ -243,7 +250,6 @@ const StorageModule = (() => {
                     p.saldo = nuevoSaldoPrestamo;
                     if (nuevoSaldoPrestamo <= 0) p.estado = 'Finalizado';
 
-                    // Sincronizar cuotas
                     if (cuotasActualizadas) {
                         p.cuotas = cuotasActualizadas;
                         p.cuotas_detalle = cuotasActualizadas;
@@ -294,7 +300,7 @@ const StorageModule = (() => {
                         .or(`id.eq.${cuotaId},num_cuota.eq.${cuotaId}`);
                 }
 
-                // 3. Actualizar el saldo restante y estado del préstamo en Supabase
+                // 3. Actualizar saldo y estado del préstamo
                 const nuevoEstado = nuevoSaldoPrestamo <= 0 ? 'Finalizado' : 'Activo';
                 
                 await _supabase
