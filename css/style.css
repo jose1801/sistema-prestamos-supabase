@@ -45,6 +45,21 @@ body {
     min-height: 100vh;
     display: flex;
     overflow-x: hidden;
+    position: relative;
+}
+
+/* OVERLAY PARA MÓVILES */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 99;
+}
+
+.sidebar-overlay.active {
+    display: block;
 }
 
 /* LAYOUT ESTRUCTURAL */
@@ -75,6 +90,7 @@ body {
     list-style: none;
     padding: 15px 10px;
     flex: 1;
+    overflow-y: auto;
 }
 
 .sidebar-menu li a {
@@ -102,6 +118,8 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    width: 100%;
+    transition: margin-left 0.3s ease;
 }
 
 .top-header {
@@ -141,6 +159,9 @@ body {
 .content-body {
     padding: 30px;
     flex: 1;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
 }
 
 .view-page {
@@ -164,6 +185,12 @@ body {
     color: var(--text-main);
     font-size: 1.5rem;
     cursor: pointer;
+    padding: 5px;
+    border-radius: var(--radius-sm);
+}
+
+.toggle-menu:hover {
+    background: var(--bg-hover);
 }
 
 /* AUTH SECTION */

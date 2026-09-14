@@ -23,7 +23,38 @@ const AppModule = (() => {
     const initNavigation = () => {
         const navLinks = document.querySelectorAll('.nav-link');
         const pages = document.querySelectorAll('.view-page');
+        const toggleBtn = document.getElementById('toggle-menu');
+        const sidebar = document.getElementById('sidebar');
 
+        // 1. Crear el overlay dinámico para móviles si no existe en el DOM
+        let overlay = document.querySelector('.sidebar-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'sidebar-overlay';
+            document.body.appendChild(overlay);
+        }
+
+        // Función auxiliar para cerrar el menú lateral en móviles
+        const cerrarMenuMobile = () => {
+            if (sidebar) sidebar.classList.remove('open');
+            if (overlay) overlay.classList.remove('active');
+        };
+
+        // Función auxiliar para alternar (abrir/cerrar) el menú lateral
+        const toggleSidebar = () => {
+            if (sidebar) sidebar.classList.toggle('open');
+            if (overlay) overlay.classList.toggle('active');
+        };
+
+        // Control de clics en el botón hamburguesa y en el overlay oscuro
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', toggleSidebar);
+        }
+        if (overlay) {
+            overlay.addEventListener('click', cerrarMenuMobile);
+        }
+
+        // 2. Navegación entre secciones y Auto-Recogido en móviles
         navLinks.forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -36,6 +67,11 @@ const AppModule = (() => {
                 const targetPage = document.getElementById(target);
                 if (targetPage) targetPage.classList.add('active');
 
+                // Recoger el menú lateral automáticamente si estamos en un dispositivo móvil
+                if (window.innerWidth <= 768) {
+                    cerrarMenuMobile();
+                }
+
                 // Renderizar la vista correspondiente al cambiar de pestaña
                 if (target === 'view-dashboard' && typeof DashboardModule !== 'undefined') DashboardModule.render();
                 if (target === 'view-clientes' && typeof ClientesModule !== 'undefined') ClientesModule.render();
@@ -45,14 +81,6 @@ const AppModule = (() => {
                 if (target === 'view-auditoria' && typeof AuditoriaModule !== 'undefined') AuditoriaModule.render();
             });
         });
-
-        const toggleBtn = document.getElementById('toggle-menu');
-        const sidebar = document.getElementById('sidebar');
-        if (toggleBtn && sidebar) {
-            toggleBtn.addEventListener('click', () => {
-                sidebar.classList.toggle('open');
-            });
-        }
     };
 
     const initAuth = () => {

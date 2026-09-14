@@ -1,11 +1,22 @@
+
+
 /* ==========================================
    ESTILOS DE RECIBO DE PAGO & IMPRESIÓN
    ========================================== */
+.receipt-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    overflow-x: auto;
+    padding: 10px 0;
+}
+
 .receipt-box {
     background: #ffffff;
     color: #000000;
-    padding: 30px;
-    width: 380px;
+    padding: 25px 20px;
+    width: 100%;
+    max-width: 380px;
     margin: 0 auto;
     font-family: 'Courier New', Courier, monospace;
     border: 1px dashed #000;
@@ -20,6 +31,7 @@
 .receipt-header h2 {
     font-size: 1.2rem;
     margin-bottom: 4px;
+    word-break: break-word;
 }
 
 .receipt-divider {
@@ -30,23 +42,107 @@
 .receipt-row {
     display: flex;
     justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
     margin: 6px 0;
     font-size: 0.9rem;
+    word-break: break-word;
 }
 
+/* ==========================================
+   RESPONSIVE DESIGN (MEDIA QUERIES)
+   ========================================== */
+
+/* Tablets y pantallas medianas (<= 1024px) */
+@media (max-width: 1024px) {
+    .content-body {
+        padding: 20px;
+    }
+}
+
+/* Dispositivos móviles (<= 768px) */
+@media (max-width: 768px) {
+    .toggle-menu {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    #sidebar {
+        transform: translateX(-100%);
+        box-shadow: var(--shadow);
+    }
+
+    #sidebar.open {
+        transform: translateX(0);
+    }
+
+    #main-content {
+        margin-left: 0;
+    }
+
+    .top-header {
+        padding: 0 15px;
+    }
+
+    .content-body {
+        padding: 15px;
+    }
+
+    .auth-card {
+        padding: 25px 20px;
+    }
+
+    .receipt-box {
+        padding: 15px 12px;
+        font-size: 0.85rem;
+    }
+
+    .receipt-row {
+        font-size: 0.82rem;
+    }
+}
+
+/* Smartphones pequeños (<= 480px) */
+@media (max-width: 480px) {
+    .top-header h1, 
+    .top-header h2 {
+        font-size: 1.1rem;
+    }
+
+    .btn-logout {
+        padding: 5px 10px;
+        font-size: 0.8rem;
+    }
+
+    .receipt-box {
+        width: 100%;
+        max-width: 100%;
+    }
+}
+
+/* ESTILOS DE IMPRESIÓN (TICKETS Y HOJAS) */
 @media print {
     body * {
         visibility: hidden;
     }
-    #printable-receipt, #printable-receipt * {
+    
+    #printable-receipt, 
+    #printable-receipt * {
         visibility: visible;
     }
+    
     #printable-receipt {
         position: absolute;
         left: 0;
         top: 0;
         width: 100%;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+        border: none;
     }
+
     .no-print {
         display: none !important;
     }
