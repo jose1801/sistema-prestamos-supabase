@@ -9,12 +9,11 @@ const RecibosModule = (() => {
             if (!select) return;
 
             select.innerHTML = '<option value="">Seleccione un recibo...</option>';
-
-            // Ordenar recibos por fecha descendente
             pagos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
             pagos.forEach(p => {
-                select.innerHTML += `<option value="${p.id}">${p.num_recibo || p.id} - $${parseFloat(p.monto).toFixed(2)} (${p.fecha})</option>`;
+                const montoFix = parseFloat(p.monto || 0).toFixed(2);
+                select.innerHTML += `<option value="${p.id}">${p.num_recibo || p.id} - $${montoFix} (${p.fecha || ''})</option>`;
             });
         },
 
@@ -23,92 +22,73 @@ const RecibosModule = (() => {
             if (!id) return;
             
             const pagos = await StorageModule.getPagos();
-            // Comparación flexible de IDs (string vs number)
             const pago = pagos.find(p => String(p.id) === String(id));
             if (!pago) return;
 
-            const prestamos = await StorageModule.getPrestamos();
-            const prestamo = prestamos.find(pr => String(pr.id) === String(pago.prestamo_id)) || {};
-            
-            await this.generarDirecto(pago, prestamo);
+            const prestamo = await StorageModule.getPrestamoById(pago.prestamo_id);
+            await this.generarDirecto(pago, prestamo || {});
         },
 
-        async generarDirecto(pago, prestamo) {
-            // 1. Obtener nombre del cliente con resolución flexible
-            let clienteNombre = 'CLIENTE GENERAL';
-            if (prestamo.clientes && (prestamo.clientes.nombre || prestamo.clientes.nombre_completo)) {
-                clienteNombre = prestamo.clientes.nombre || prestamo.clientes.nombre_completo;
-            } else if (prestamo.cliente && (prestamo.cliente.nombre || prestamo.cliente.nombre_completo)) {
-                clienteNombre = prestamo.cliente.nombre || prestamo.cliente.nombre_completo;
-            } else if (prestamo.cliente_nombre) {
-                clienteNombre = prestamo.cliente_nombre;
-            } else if (prestamo.cliente_id) {
-                const clientes = await StorageModule.getClientes();
-                const cli = clientes.find(c => String(c.id) === String(prestamo.cliente_id));
-                if (cli) clienteNombre = cli.nombre || cli.nombre_completo || 'CLIENTE GENERAL';
+        async generarDirecto(pago, prestamoInput) {
+            // Cargar estado fresco del préstamo y lista completa de pagos
+            let prestamo = prestamoInput;
+            if (pago?.prestamo_id && typeof StorageModule.getPrestamoById === 'function') {
+                const pFresh = await StorageModule.getPrestamoById(pago.prestamo_id);
+                if (pFresh) prestamo = pFresh;
             }
 
-            // 2. Conteo dinámico de cuotas y saldos
-            const cuotas = prestamo.cuotas_detalle || prestamo.cuotas || [];
+            const todosLosPagos = await StorageModule.getPagos();
+            // Pagos registrados de este préstamo específico
+            const pagosPrestamo = todosLosPagos.filter(p => String(p.prestamo_id) === String(prestamo.id || pago.prestamo_id));
+
+            // 1. Cliente
+            let clienteNombre = prestamo.clientes?.nombre || prestamo.cliente?.nombre || prestamo.cliente_nombre || '';
+            if (!clienteNombre && prestamo.cliente_id) {
+                try {
+                    const clientes = await StorageModule.getClientes();
+                    const cli = clientes.find(c => String(c.id) === String(prestamo.cliente_id));
+                    if (cli) clienteNombre = cli.nombre || cli.nombre_completo;
+                } catch(e){}
+            }
+            if (!clienteNombre) clienteNombre = 'CLIENTE GENERAL';
+
+            // 2. Definición exacta del total de cuotas y montos
+            const numTotalCuotas = parseInt(prestamo.numero_cuotas || prestamo.num_cuotas || 30);
             const totalVenta = parseFloat(prestamo.total_pagar || prestamo.monto || prestamo.total || 0);
             const montoPagado = parseFloat(pago.monto || 0);
             const sancion = parseFloat(pago.sancion || 0);
-            
-            // Convertir la fecha a formato legible/comparable
-            const fechaDelPago = pago.fecha ? new Date(pago.fecha) : new Date();
-
-            let cuotasPagadas = 0;
-            let cuotasRestantes = 0;
-            let cuotasAtrasadas = 0;
-
-            if (Array.isArray(cuotas) && cuotas.length > 0) {
-                cuotas.forEach(cuota => {
-                    if (cuota.estado === 'Pagado') {
-                        cuotasPagadas++;
-                    } else {
-                        cuotasRestantes++;
-                        if (cuota.fecha_vencimiento && new Date(cuota.fecha_vencimiento) < fechaDelPago) {
-                            cuotasAtrasadas++;
-                        }
-                    }
-                });
-            } else {
-                // Fallback si no hay array de cuotas guardado
-                cuotasPagadas = pago.cuotas_pagadas_en_evento || pago.cuotas_pagadas || 1;
-                const totalCuotas = parseInt(prestamo.numero_cuotas || prestamo.num_cuotas || 0);
-                cuotasRestantes = Math.max(0, totalCuotas - cuotasPagadas);
-            }
-
             const nuevoSaldo = parseFloat(prestamo.saldo_restante ?? Math.max(0, totalVenta - montoPagado));
 
-            // 3. Imprimir datos de forma segura en los elementos HTML
-            const elFecha = document.getElementById('recibo-fecha');
-            const elCliente = document.getElementById('recibo-cliente');
-            const elVenta = document.getElementById('recibo-valor-venta');
-            const elPagado = document.getElementById('recibo-valor-pagado');
-            const elCPagadas = document.getElementById('recibo-cuotas-pagadas');
-            const elCRestantes = document.getElementById('recibo-cuotas-restantes');
-            const elCAtrasadas = document.getElementById('recibo-cuotas-atrasadas');
-            const elSancion = document.getElementById('recibo-sancion');
-            const elNuevoSaldo = document.getElementById('recibo-nuevo-saldo');
+            // 3. CONTEO REAL DE ABONOS DIARIOS
+            // Las cuotas pagadas equivalen a la cantidad de abonos/pagos realizados en el historial
+            let cuotasPagadas = pagosPrestamo.length;
+            if (cuotasPagadas === 0 && montoPagado > 0) cuotasPagadas = 1;
 
-            if (elFecha) elFecha.textContent = pago.fecha;
-            if (elCliente) elCliente.textContent = clienteNombre.toUpperCase();
-            if (elVenta) elVenta.textContent = `$ ${totalVenta.toFixed(2)}`;
-            if (elPagado) elPagado.textContent = `$ ${montoPagado.toFixed(2)}`;
-            if (elCPagadas) elCPagadas.textContent = cuotasPagadas;
-            if (elCRestantes) elCRestantes.textContent = cuotasRestantes;
-            if (elCAtrasadas) elCAtrasadas.textContent = cuotasAtrasadas;
-            if (elSancion) elSancion.textContent = `$ ${sancion.toFixed(2)}`;
-            if (elNuevoSaldo) elNuevoSaldo.textContent = `$ ${nuevoSaldo.toFixed(2)}`;
+            // Las cuotas restantes son la resta directa del total (Ej: 30 total - 1 pagada = 29 restantes)
+            let cuotasRestantes = Math.max(0, numTotalCuotas - cuotasPagadas);
 
-            // 4. Seleccionar la opción correspondiente en el selector de recibos
+            // 4. Renderizado directo a la plantilla del recibo
+            const setText = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val;
+            };
+
+            setText('recibo-fecha', pago.fecha || new Date().toISOString().split('T')[0]);
+            setText('recibo-cliente', clienteNombre.toUpperCase());
+            setText('recibo-valor-venta', `$ ${totalVenta.toFixed(2)}`);
+            setText('recibo-valor-pagado', `$ ${montoPagado.toFixed(2)}`);
+            setText('recibo-cuotas-pagadas', cuotasPagadas);
+            setText('recibo-cuotas-restantes', cuotasRestantes);
+            setText('recibo-cuotas-atrasadas', 0);
+            setText('recibo-sancion', `$ ${sancion.toFixed(2)}`);
+            setText('recibo-nuevo-saldo', `$ ${nuevoSaldo.toFixed(2)}`);
+
+            // 5. Cambio a la pestaña Recibos
             const select = document.getElementById('select-recibos-lista');
             if (select && String(select.value) !== String(pago.id)) {
                 select.value = pago.id;
             }
 
-            // 5. Navegar automáticamente a la vista de recibos
             document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
             document.querySelectorAll('.view-page').forEach(p => p.classList.remove('active'));
             
