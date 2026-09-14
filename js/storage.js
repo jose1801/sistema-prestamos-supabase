@@ -4,7 +4,7 @@
 
 // CONFIGURACIÓN DE TU PROYECTO SUPABASE
 const SUPABASE_URL = "https://dhyirtkbufmstyhduckx.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRoeWlydGtidWZtc3R5aGR1Yc4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjYxMzgsImV4cCI6MjEwNDkwMjEzOH0.540N1NHFiIe5Va4jCLv5bN-qLqn-aDQ5gE9DmbizY_8";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRoeWlydGtidWZtc3R5aGR1Y2t4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMjYxMzgsImV4cCI6MjEwNDkwMjEzOH0.540N1NHFiIe5Va4jCLv5bN-qLqn-aDQ5gE9DmbizY_8";
 
 // Inicializar cliente Supabase oficial desde el CDN si está presente
 let _supabase = null;
@@ -102,16 +102,25 @@ const StorageModule = (() => {
 
                 if (error) throw error;
 
-                return (data || []).map(p => ({
-                    ...p,
-                    tasa_interes: parseFloat(p.tasa_interes ?? p.interes_pct ?? 0),
-                    interes_pct: parseFloat(p.interes_pct ?? p.tasa_interes ?? 0),
-                    monto_total: parseFloat(p.monto_total ?? p.total ?? p.monto ?? 0),
-                    total: parseFloat(p.total ?? p.monto_total ?? p.monto ?? 0),
-                    saldo_restante: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
-                    saldo: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
-                    cuotas_detalle: p.cuotas || p.cuotas_detalle || []
-                }));
+                return (data || []).map(p => {
+                    const cuotasOrdenadas = (p.cuotas || p.cuotas_detalle || []).sort(
+                        (a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero)
+                    );
+
+                    return {
+                        ...p,
+                        tasa_interes: parseFloat(p.tasa_interes ?? p.interes_pct ?? 0),
+                        interes_pct: parseFloat(p.interes_pct ?? p.tasa_interes ?? 0),
+                        monto_total: parseFloat(p.monto_total ?? p.total ?? p.monto ?? 0),
+                        total: parseFloat(p.total ?? p.monto_total ?? p.monto ?? 0),
+                        num_cuotas: parseInt(p.num_cuotas ?? p.cuotas_count ?? 1),
+                        cuotas_count: parseInt(p.cuotas_count ?? p.num_cuotas ?? 1),
+                        saldo_restante: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
+                        saldo: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
+                        cuotas: cuotasOrdenadas,
+                        cuotas_detalle: cuotasOrdenadas
+                    };
+                });
             } catch (err) {
                 console.error('Error al obtener préstamos:', err);
                 return [];
@@ -133,15 +142,22 @@ const StorageModule = (() => {
 
                 if (error) throw error;
 
+                const cuotasOrdenadas = (data.cuotas || []).sort(
+                    (a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero)
+                );
+
                 return {
                     ...data,
                     tasa_interes: parseFloat(data.tasa_interes ?? data.interes_pct ?? 0),
                     interes_pct: parseFloat(data.interes_pct ?? data.tasa_interes ?? 0),
                     monto_total: parseFloat(data.monto_total ?? data.total ?? data.monto ?? 0),
                     total: parseFloat(data.total ?? data.monto_total ?? data.monto ?? 0),
+                    num_cuotas: parseInt(data.num_cuotas ?? data.cuotas_count ?? 1),
+                    cuotas_count: parseInt(data.cuotas_count ?? data.num_cuotas ?? 1),
                     saldo_restante: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
                     saldo: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
-                    cuotas_detalle: (data.cuotas || []).sort((a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero))
+                    cuotas: cuotasOrdenadas,
+                    cuotas_detalle: cuotasOrdenadas
                 };
             } catch (err) {
                 console.error('Error al obtener préstamo por ID:', err);
@@ -154,7 +170,13 @@ const StorageModule = (() => {
                 let prestamos = await this.getPrestamos();
                 const newId = prestamoData.id || 'PR-' + Date.now();
                 const saldoCalculado = parseFloat(prestamoData.monto_total || prestamoData.monto || 0);
+                const numCuotasVal = prestamoData.num_cuotas || prestamoData.cuotas_count || prestamoData.plazo_meses || 1;
                 
+                const cuotasConEstado = cuotasArray.map(c => ({
+                    ...c,
+                    estado: c.estado || 'Pendiente'
+                }));
+
                 const fullPrestamo = {
                     ...prestamoData,
                     id: newId,
@@ -162,10 +184,13 @@ const StorageModule = (() => {
                     interes_pct: prestamoData.interes_pct || prestamoData.tasa_interes || 0,
                     monto_total: saldoCalculado,
                     total: saldoCalculado,
+                    num_cuotas: numCuotasVal,
+                    cuotas_count: numCuotasVal,
                     saldo_restante: saldoCalculado,
                     saldo: saldoCalculado,
-                    cuotas: cuotasArray,
-                    cuotas_detalle: cuotasArray
+                    estado: 'Activo',
+                    cuotas: cuotasConEstado,
+                    cuotas_detalle: cuotasConEstado
                 };
 
                 prestamos.push(fullPrestamo);
@@ -176,8 +201,9 @@ const StorageModule = (() => {
             try {
                 const tasaVal = prestamoData.tasa_interes || prestamoData.interes_pct || 0;
                 const totalVal = prestamoData.monto_total || prestamoData.monto || 0;
+                const numCuotasVal = prestamoData.num_cuotas || prestamoData.cuotas_count || prestamoData.plazo_meses || 1;
 
-                // 1. Insertar el préstamo asegurando la presencia de alias para evitar restricciones NOT NULL
+                // 1. Insertar préstamo en Supabase
                 const { data: pres, error: errPres } = await _supabase
                     .from('prestamos')
                     .insert([{
@@ -186,7 +212,8 @@ const StorageModule = (() => {
                         monto: prestamoData.monto,
                         tasa_interes: tasaVal,
                         interes_pct: tasaVal,
-                        num_cuotas: prestamoData.num_cuotas || prestamoData.plazo_meses || 1,
+                        num_cuotas: numCuotasVal,
+                        cuotas_count: numCuotasVal,
                         frecuencia: prestamoData.frecuencia,
                         monto_total: totalVal,
                         total: totalVal,
@@ -201,7 +228,7 @@ const StorageModule = (() => {
                 const prestamoCreado = pres[0];
                 const prestamoId = prestamoCreado.id;
 
-                // 2. Insertar cada cuota asociada al préstamo
+                // 2. Insertar cuotas generadas
                 const cuotasMapped = cuotasArray.map(c => ({
                     prestamo_id: prestamoId,
                     num_cuota: c.num_cuota || c.numero,
@@ -243,7 +270,18 @@ const StorageModule = (() => {
             }
         },
 
-        async registrarPago(pagoData, cuotaId, nuevoSaldoPrestamo, cuotasActualizadas) {
+        /**
+         * Registra un nuevo pago, actualiza el estado de la(s) cuota(s) y el saldo del préstamo.
+         * @param {Object} pagoData - Datos del comprobante (monto, fecha, metodo, etc.)
+         * @param {string|number|Array} cuotasPagadasIds - ID o array de IDs/Números de las cuotas a marcar como pagadas
+         * @param {number} nuevoSaldoPrestamo - Nuevo saldo restante a guardar en el préstamo
+         * @param {Array} [cuotasActualizadas] - Opcional. Array completo de cuotas actualizadas en memoria
+         */
+        async registrarPago(pagoData, cuotasPagadasIds, nuevoSaldoPrestamo, cuotasActualizadas) {
+            const listIds = Array.isArray(cuotasPagadasIds) ? cuotasPagadasIds : [cuotasPagadasIds];
+            const cuotaPrincipalId = listIds[0] || null;
+            const saldoFinal = Math.max(0, parseFloat(nuevoSaldoPrestamo));
+
             if (useLocalStorage()) {
                 let pagos = await this.getPagos();
                 pagos.push(pagoData);
@@ -253,24 +291,22 @@ const StorageModule = (() => {
                 let p = prestamos.find(x => String(x.id) === String(pagoData.prestamo_id));
                 
                 if (p) {
-                    p.saldo_restante = nuevoSaldoPrestamo;
-                    p.saldo = nuevoSaldoPrestamo;
-                    if (nuevoSaldoPrestamo <= 0) p.estado = 'Finalizado';
+                    p.saldo_restante = saldoFinal;
+                    p.saldo = saldoFinal;
+                    if (saldoFinal <= 0) p.estado = 'Finalizado';
 
                     if (cuotasActualizadas) {
                         p.cuotas = cuotasActualizadas;
                         p.cuotas_detalle = cuotasActualizadas;
                     } else if (p.cuotas || p.cuotas_detalle) {
-                        const listaCuotas = p.cuotas_detalle || p.cuotas;
-                        let c = listaCuotas.find(cu => 
-                            String(cu.id) === String(cuotaId) || 
-                            String(cu.num_cuota) === String(cuotaId) || 
-                            String(cu.numero) === String(cuotaId)
-                        );
-                        if (c) {
-                            c.estado = 'Pagado';
-                            c.fecha_pago = pagoData.fecha;
-                        }
+                        const lista = p.cuotas_detalle || p.cuotas;
+                        const idsStr = listIds.map(String);
+                        lista.forEach(cuota => {
+                            if (idsStr.includes(String(cuota.id)) || idsStr.includes(String(cuota.num_cuota))) {
+                                cuota.estado = 'Pagado';
+                                cuota.fecha_pago = pagoData.fecha;
+                            }
+                        });
                     }
                 }
                 
@@ -279,45 +315,64 @@ const StorageModule = (() => {
             }
 
             try {
-                // 1. Insertar pago en Supabase
+                // 1. Inserción del comprobante de pago
+                const pagoPayload = {
+                    num_recibo: pagoData.num_recibo,
+                    prestamo_id: pagoData.prestamo_id,
+                    cuota_id: cuotaPrincipalId,
+                    monto: parseFloat(pagoData.monto),
+                    fecha: pagoData.fecha,
+                    metodo: pagoData.metodo,
+                    observaciones: pagoData.observaciones
+                };
+
+                if (pagoData.sancion) {
+                    pagoPayload.sancion = pagoData.sancion;
+                }
+
                 const { data: pagoRes, error: errPago } = await _supabase
                     .from('pagos')
-                    .insert([{
-                        num_recibo: pagoData.num_recibo,
-                        prestamo_id: pagoData.prestamo_id,
-                        cuota_id: cuotaId || pagoData.cuota_id,
-                        monto: pagoData.monto,
-                        fecha: pagoData.fecha,
-                        metodo: pagoData.metodo,
-                        observaciones: pagoData.observaciones,
-                        sancion: pagoData.sancion || 0
-                    }])
+                    .insert([pagoPayload])
                     .select();
 
                 if (errPago) throw errPago;
 
-                // 2. Marcar la cuota pagada en Supabase si existe ID de cuota
-                if (cuotaId) {
-                    await _supabase
+                // 2. Marcar las cuotas correspondientes como Pagadas en Supabase
+                if (listIds.length > 0 && listIds[0] !== undefined) {
+                    const { error: errCuotas } = await _supabase
                         .from('cuotas')
                         .update({ 
                             estado: 'Pagado',
                             fecha_pago: pagoData.fecha 
                         })
-                        .or(`id.eq.${cuotaId},num_cuota.eq.${cuotaId}`);
+                        .in('id', listIds);
+
+                    // Si falló por ID, intentamos actualización por num_cuota
+                    if (errCuotas) {
+                        await _supabase
+                            .from('cuotas')
+                            .update({ 
+                                estado: 'Pagado',
+                                fecha_pago: pagoData.fecha 
+                            })
+                            .eq('prestamo_id', pagoData.prestamo_id)
+                            .in('num_cuota', listIds);
+                    }
                 }
 
-                // 3. Actualizar el saldo restante y estado del préstamo
-                const nuevoEstado = nuevoSaldoPrestamo <= 0 ? 'Finalizado' : 'Activo';
+                // 3. Actualizar el saldo restante y el estado del préstamo
+                const nuevoEstado = saldoFinal <= 0 ? 'Finalizado' : 'Activo';
                 
-                await _supabase
+                const { error: errPrestamo } = await _supabase
                     .from('prestamos')
                     .update({ 
-                        saldo_restante: nuevoSaldoPrestamo, 
-                        saldo: nuevoSaldoPrestamo, 
+                        saldo_restante: saldoFinal, 
+                        saldo: saldoFinal, 
                         estado: nuevoEstado 
                     })
                     .eq('id', pagoData.prestamo_id);
+
+                if (errPrestamo) throw errPrestamo;
 
                 return pagoRes[0];
             } catch (err) {

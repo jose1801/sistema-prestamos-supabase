@@ -20,7 +20,6 @@ const PagosModule = (() => {
             const prestamosActivos = prestamos.filter(p => parseFloat(p.saldo_restante ?? p.saldo ?? 0) > 0);
 
             prestamosActivos.forEach(p => {
-                // Resolución flexible y segura del nombre del cliente para evitar "Sin nombre"
                 const nombre = p.clientes?.nombre 
                     || p.clientes?.nombre_completo 
                     || p.cliente?.nombre 
@@ -63,7 +62,7 @@ const PagosModule = (() => {
             const fechaPagoSeleccionada = document.getElementById('pago-fecha')?.value || new Date().toISOString().split('T')[0];
             const fechaPago = new Date(fechaPagoSeleccionada);
 
-            // Detectar cuotas atrasadas respecto a la fecha de pago seleccionada
+            // Detectar cuotas atrasadas
             const atrasadas = cuotas.filter(c => c.estado !== 'Pagado' && c.fecha_vencimiento && new Date(c.fecha_vencimiento) < fechaPago);
 
             if (proxima) {
@@ -93,15 +92,15 @@ const PagosModule = (() => {
     };
 })();
 
-// SUBMIT DEL FORMULARIO DE PAGOS
+// SUBMIT DEL FORMULARIO DE PAGOS (CON AMORTIZACIÓN MÚLTIPLE DE CUOTAS)
 document.getElementById('form-pago')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const prestamoId = document.getElementById('pago-prestamo-id').value;
     const monto = parseFloat(document.getElementById('pago-monto').value);
     const fechaPago = document.getElementById('pago-fecha').value || new Date().toISOString().split('T')[0];
-    const metodo = document.getElementById('pago-metodo').value;
-    const obs = document.getElementById('pago-observaciones').value;
+    const metodo = document.getElementById('pago-metodo')?.value || 'Efectivo';
+    const obs = document.getElementById('pago-observaciones')?.value || '';
 
     if (!prestamoId || isNaN(monto) || monto <= 0) {
         if (typeof AppModule !== 'undefined' && AppModule.toast) {
@@ -118,23 +117,34 @@ document.getElementById('form-pago')?.addEventListener('submit', async (e) => {
         const saldoActual = parseFloat(prestamo.saldo_restante ?? prestamo.saldo ?? 0);
         const nuevoSaldo = Math.max(0, saldoActual - monto);
 
-        // 1. Sincronizar cuotas
-        const container = document.getElementById('pago-detalles-cuota');
-        const cuotaId = container?.getAttribute('data-cuota-id');
-        
-        let cuotaEncontrada = cuotas.find(c => 
-            String(c.id) === String(cuotaId) || 
-            String(c.num_cuota) === String(cuotaId) || 
-            String(c.numero) === String(cuotaId)
-        );
-        
-        if (!cuotaEncontrada) {
-            cuotaEncontrada = cuotas.find(c => c.estado !== 'Pagado');
-        }
+        // --- BUCLE DE AMORTIZACIÓN: Pagos Múltiples de Cuotas ---
+        let montoDisponible = monto;
+        let cuotasLiquidadas = 0;
+        let primeraCuotaAfectadaId = null;
 
-        if (cuotaEncontrada) {
-            cuotaEncontrada.estado = 'Pagado';
-            cuotaEncontrada.fecha_pago = fechaPago;
+        for (let cuota of cuotas) {
+            if (montoDisponible <= 0) break;
+
+            if (cuota.estado !== 'Pagado') {
+                const valorCuota = parseFloat(cuota.valor_cuota || cuota.monto || 0);
+
+                if (!primeraCuotaAfectadaId) {
+                    primeraCuotaAfectadaId = cuota.id || cuota.num_cuota || cuota.numero;
+                }
+
+                if (montoDisponible >= valorCuota) {
+                    // Cubre la cuota por completo
+                    cuota.estado = 'Pagado';
+                    cuota.fecha_pago = fechaPago;
+                    montoDisponible -= valorCuota;
+                    cuotasLiquidadas++;
+                } else {
+                    // Abono parcial (no liquida toda la cuota)
+                    cuota.estado = 'Parcial';
+                    cuota.fecha_pago = fechaPago;
+                    montoDisponible = 0;
+                }
+            }
         }
 
         const numRecibo = 'REC-' + Math.floor(100000 + Math.random() * 900000);
@@ -142,7 +152,8 @@ document.getElementById('form-pago')?.addEventListener('submit', async (e) => {
         const pagoData = {
             num_recibo: numRecibo,
             prestamo_id: prestamoId,
-            cuota_id: cuotaEncontrada ? (cuotaEncontrada.id || cuotaEncontrada.num_cuota) : null,
+            cuota_id: primeraCuotaAfectadaId,
+            cuotas_pagadas_en_evento: cuotasLiquidadas,
             monto: monto,
             fecha: fechaPago,
             metodo: metodo,
@@ -150,22 +161,23 @@ document.getElementById('form-pago')?.addEventListener('submit', async (e) => {
             sancion: 0.00
         };
 
-        // 2. Guardar estado actualizado
+        // Actualizar estado del préstamo
         prestamo.saldo_restante = nuevoSaldo;
+        if (nuevoSaldo === 0) prestamo.estado = 'Finalizado';
         if (prestamo.cuotas_detalle) prestamo.cuotas_detalle = cuotas;
         if (prestamo.cuotas) prestamo.cuotas = cuotas;
 
-        await StorageModule.registrarPago(pagoData, cuotaId, nuevoSaldo, cuotas);
+        await StorageModule.registrarPago(pagoData, primeraCuotaAfectadaId, nuevoSaldo, cuotas);
         
         if (typeof StorageModule.logAudit === 'function') {
             await StorageModule.logAudit('Registró pago', 'Pagos', `${numRecibo} - $${monto.toFixed(2)} (${fechaPago})`);
         }
         
         if (typeof AppModule !== 'undefined' && AppModule.toast) {
-            AppModule.toast('Pago registrado y amortización actualizada');
+            AppModule.toast('Pago registrado y cuotas actualizadas correctamente');
         }
 
-        // 3. Sincronizar módulos globales
+        // Sincronizar UI y módulos
         if (typeof PrestamosModule !== 'undefined' && PrestamosModule.render) {
             await PrestamosModule.render();
         }
@@ -173,12 +185,11 @@ document.getElementById('form-pago')?.addEventListener('submit', async (e) => {
             await DashboardModule.init();
         }
 
-        // 4. Limpiar formulario y refrescar lista de pagos
         document.getElementById('form-pago').reset();
+        const container = document.getElementById('pago-detalles-cuota');
         if (container) container.style.display = 'none';
         await PagosModule.render();
 
-        // 5. Generar recibo y cambiar a la vista Recibos
         if (typeof RecibosModule !== 'undefined' && RecibosModule.generarDirecto) {
             await RecibosModule.generarDirecto(pagoData, prestamo);
         }
