@@ -16,14 +16,34 @@ const PrestamosModule = (() => {
             prestamos.forEach(p => {
                 const nombreCliente = p.clientes ? p.clientes.nombre : 'Cliente';
                 const badgeClass = p.estado === 'Activo' ? 'badge-warning' : 'badge-success';
+                
+                // =========================================================================
+                // CÁLCULO DINÁMICO DEL TOTAL Y SALDO CON PORCENTAJE DE INTERÉS
+                // =========================================================================
+                const monto = parseFloat(p.monto) || 0;
+                const interesPct = parseFloat(p.interes_pct) || 0;
+                
+                // Calcula el Total Pagar real: Monto + Interés
+                const totalPagarCalculado = monto + (monto * (interesPct / 100));
+                
+                // Usa el valor calculado si p.total viene igual al monto
+                const totalPagar = (p.total && parseFloat(p.total) > monto) 
+                    ? parseFloat(p.total) 
+                    : totalPagarCalculado;
+
+                // Si el saldo está sin interés, se ajusta con base al total a pagar
+                const saldo = (p.saldo !== undefined && parseFloat(p.saldo) !== monto)
+                    ? parseFloat(p.saldo)
+                    : totalPagar;
+
                 tbody.innerHTML += `
                     <tr>
                         <td><strong>${p.codigo || p.id}</strong></td>
                         <td>${nombreCliente}</td>
-                        <td>$${parseFloat(p.monto).toFixed(2)}</td>
-                        <td>${p.interes_pct}%</td>
-                        <td>$${parseFloat(p.total).toFixed(2)}</td>
-                        <td>$${parseFloat(p.saldo).toFixed(2)}</td>
+                        <td>$${monto.toFixed(2)}</td>
+                        <td>${interesPct}%</td>
+                        <td>$${totalPagar.toFixed(2)}</td>
+                        <td>$${saldo.toFixed(2)}</td>
                         <td><span class="badge ${badgeClass}">${p.estado}</span></td>
                         <td>
                             <button class="btn btn-sm btn-secondary" onclick="PrestamosModule.verDetalle('${p.id}')">Ver Cuotas</button>
@@ -53,10 +73,21 @@ const PrestamosModule = (() => {
 
         async verDetalle(id) {
             const prestamo = await StorageModule.getPrestamoById(id);
+            
+            const monto = parseFloat(prestamo.monto) || 0;
+            const interesPct = parseFloat(prestamo.interes_pct) || 0;
+            const totalPagar = (prestamo.total && parseFloat(prestamo.total) > monto) 
+                ? parseFloat(prestamo.total) 
+                : (monto + (monto * (interesPct / 100)));
+
+            const saldo = (prestamo.saldo !== undefined && parseFloat(prestamo.saldo) !== monto)
+                ? parseFloat(prestamo.saldo)
+                : totalPagar;
+
             document.getElementById('modal-detalle-codigo').innerText = `Préstamo ${prestamo.codigo || prestamo.id}`;
             document.getElementById('detalle-prestamo-info').innerHTML = `
                 <p><strong>Cliente:</strong> ${prestamo.clientes ? prestamo.clientes.nombre : 'N/A'}</p>
-                <p><strong>Monto Total:</strong> $${parseFloat(prestamo.total).toFixed(2)} | <strong>Saldo Restante:</strong> $${parseFloat(prestamo.saldo).toFixed(2)}</p>
+                <p><strong>Monto Total:</strong> $${totalPagar.toFixed(2)} | <strong>Saldo Restante:</strong> $${saldo.toFixed(2)}</p>
             `;
 
             const tbody = document.getElementById('tbl-detalle-cuotas');

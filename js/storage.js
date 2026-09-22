@@ -1,5 +1,10 @@
 /**
- * CONEXIÓN DIRECTA A BASE DE DATOS SUPABASE Y LOCALSTORAGE
+ * CONEXIÓN A BASE DE DATOS SUPABASE (con respaldo en LocalStorage)
+ *
+ * REGLA DE ORO DEL SALDO:
+ *   total = monto + (monto * interes_pct / 100)
+ *   saldo = total - SUMA de todos los pagos del préstamo
+ * El saldo nunca se "adivina": siempre se recalcula desde la tabla pagos.
  */
 
 // CONFIGURACIÓN DE TU PROYECTO SUPABASE
@@ -14,20 +19,82 @@ if (typeof supabase !== 'undefined' && SUPABASE_URL && SUPABASE_ANON_KEY) {
 
 const StorageModule = (() => {
 
-    // Método helper de fallback a LocalStorage si no se puede conectar a Supabase
+    // Si Supabase no cargó, se usa LocalStorage
     const useLocalStorage = () => !_supabase;
+
+    // ---------- Helpers ----------
+    const round2 = (n) => Math.round(((parseFloat(n) || 0) + Number.EPSILON) * 100) / 100;
+
+    const leerLS = (key, fallback) => {
+        try {
+            return JSON.parse(localStorage.getItem(key)) || fallback;
+        } catch (e) {
+            return fallback;
+        }
+    };
+
+    const guardarLS = (key, valor) => localStorage.setItem(key, JSON.stringify(valor));
+
+    // Convierte un préstamo a números y ordena las cuotas. No recalcula nada.
+    const normalizarPrestamo = (p) => {
+        const cuotas = (p.cuotas || [])
+            .slice()
+            .sort((a, b) => (a.num_cuota || 0) - (b.num_cuota || 0));
+        return {
+            ...p,
+            monto: parseFloat(p.monto) || 0,
+            interes_pct: parseFloat(p.interes_pct) || 0,
+            total: parseFloat(p.total) || 0,
+            saldo: parseFloat(p.saldo) || 0,
+            cuotas_count: parseInt(p.cuotas_count) || cuotas.length || 1,
+            cuotas
+        };
+    };
+
+    /**
+     * Calcula saldo, estado y cuotas cubiertas a partir de los pagos.
+     * @param {number} total     Total a pagar (capital + interés)
+     * @param {number[]} montos  Montos de todos los pagos del préstamo
+     * @param {object[]} cuotas  Cuotas ORDENADAS por num_cuota
+     */
+    const calcularEstadoPrestamo = (total, montos, cuotas) => {
+        const totalPagado = montos.reduce((s, m) => s + (parseFloat(m) || 0), 0);
+        let saldo = round2(total - totalPagado);
+        if (saldo < 0.01) saldo = 0; // absorbe redondeos de la última cuota
+
+        // Una cuota queda "Pagada" cuando lo abonado cubre su valor, en orden
+        let restante = totalPagado;
+        const cubiertas = [];
+        for (const c of cuotas) {
+            const v = parseFloat(c.valor_cuota) || 0;
+            if (saldo === 0 || restante + 0.01 >= v) {
+                cubiertas.push(c.id);
+                restante -= v;
+            } else {
+                break;
+            }
+        }
+
+        return {
+            saldo,
+            estado: saldo <= 0 ? 'Finalizado' : 'Activo',
+            cubiertas
+        };
+    };
 
     return {
         isSupabaseActive() {
             return !!_supabase;
         },
 
-        // --- CLIENTES ---
+        // =====================================================
+        // CLIENTES
+        // =====================================================
         async getClientes() {
             if (useLocalStorage()) {
-                return JSON.parse(localStorage.getItem('sp_clientes')) || [
+                return leerLS('sp_clientes', [
                     { id: '1', cedula: '0928374651', nombre: 'Juan Pérez', telefono: '0991234567', direccion: 'Guayaquil', estado: 'Activo' }
-                ];
+                ]);
             }
             try {
                 const { data, error } = await _supabase
@@ -44,17 +111,17 @@ const StorageModule = (() => {
 
         async saveCliente(cliente) {
             if (useLocalStorage()) {
-                let clientes = await this.getClientes();
+                const clientes = await this.getClientes();
                 cliente.id = cliente.id || 'CLI-' + Date.now();
-                
+
                 const index = clientes.findIndex(c => c.id === cliente.id);
                 if (index >= 0) {
                     clientes[index] = { ...clientes[index], ...cliente };
                 } else {
                     clientes.push(cliente);
                 }
-                
-                localStorage.setItem('sp_clientes', JSON.stringify(clientes));
+
+                guardarLS('sp_clientes', clientes);
                 return cliente;
             }
 
@@ -73,9 +140,8 @@ const StorageModule = (() => {
 
         async deleteCliente(id) {
             if (useLocalStorage()) {
-                let clientes = await this.getClientes();
-                clientes = clientes.filter(c => c.id !== id);
-                localStorage.setItem('sp_clientes', JSON.stringify(clientes));
+                const clientes = (await this.getClientes()).filter(c => c.id !== id);
+                guardarLS('sp_clientes', clientes);
                 return;
             }
 
@@ -88,10 +154,17 @@ const StorageModule = (() => {
             }
         },
 
-        // --- PRÉSTAMOS & CUOTAS ---
+        // =====================================================
+        // PRÉSTAMOS & CUOTAS
+        // =====================================================
         async getPrestamos() {
             if (useLocalStorage()) {
-                return JSON.parse(localStorage.getItem('sp_prestamos')) || [];
+                const lista = leerLS('sp_prestamos', []);
+                const clientes = leerLS('sp_clientes', []);
+                return lista.map(p => normalizarPrestamo({
+                    ...p,
+                    clientes: clientes.find(c => String(c.id) === String(p.cliente_id)) || null
+                }));
             }
 
             try {
@@ -99,28 +172,8 @@ const StorageModule = (() => {
                     .from('prestamos')
                     .select('*, clientes(*), cuotas(*)')
                     .order('created_at', { ascending: false });
-
                 if (error) throw error;
-
-                return (data || []).map(p => {
-                    const cuotasOrdenadas = (p.cuotas || p.cuotas_detalle || []).sort(
-                        (a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero)
-                    );
-
-                    return {
-                        ...p,
-                        tasa_interes: parseFloat(p.tasa_interes ?? p.interes_pct ?? 0),
-                        interes_pct: parseFloat(p.interes_pct ?? p.tasa_interes ?? 0),
-                        monto_total: parseFloat(p.monto_total ?? p.total ?? p.monto ?? 0),
-                        total: parseFloat(p.total ?? p.monto_total ?? p.monto ?? 0),
-                        num_cuotas: parseInt(p.num_cuotas ?? p.cuotas_count ?? 1),
-                        cuotas_count: parseInt(p.cuotas_count ?? p.num_cuotas ?? 1),
-                        saldo_restante: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
-                        saldo: parseFloat(p.saldo_restante ?? p.saldo ?? 0),
-                        cuotas: cuotasOrdenadas,
-                        cuotas_detalle: cuotasOrdenadas
-                    };
-                });
+                return (data || []).map(normalizarPrestamo);
             } catch (err) {
                 console.error('Error al obtener préstamos:', err);
                 return [];
@@ -139,121 +192,146 @@ const StorageModule = (() => {
                     .select('*, clientes(*), cuotas(*)')
                     .eq('id', id)
                     .single();
-
                 if (error) throw error;
-
-                const cuotasOrdenadas = (data.cuotas || []).sort(
-                    (a, b) => (a.num_cuota || a.numero) - (b.num_cuota || b.numero)
-                );
-
-                return {
-                    ...data,
-                    tasa_interes: parseFloat(data.tasa_interes ?? data.interes_pct ?? 0),
-                    interes_pct: parseFloat(data.interes_pct ?? data.tasa_interes ?? 0),
-                    monto_total: parseFloat(data.monto_total ?? data.total ?? data.monto ?? 0),
-                    total: parseFloat(data.total ?? data.monto_total ?? data.monto ?? 0),
-                    num_cuotas: parseInt(data.num_cuotas ?? data.cuotas_count ?? 1),
-                    cuotas_count: parseInt(data.cuotas_count ?? data.num_cuotas ?? 1),
-                    saldo_restante: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
-                    saldo: parseFloat(data.saldo_restante ?? data.saldo ?? 0),
-                    cuotas: cuotasOrdenadas,
-                    cuotas_detalle: cuotasOrdenadas
-                };
+                return normalizarPrestamo(data);
             } catch (err) {
                 console.error('Error al obtener préstamo por ID:', err);
                 throw err;
             }
         },
 
+        // Todos los préstamos (con cuotas) de un cliente específico
+        async getPrestamosPorCliente(clienteId) {
+            const prestamos = await this.getPrestamos();
+            return prestamos.filter(p => String(p.cliente_id) === String(clienteId));
+        },
+
         async createPrestamo(prestamoData, cuotasArray) {
+            // Total real con interés: la única fórmula del sistema
+            const monto = round2(prestamoData.monto);
+            const tasa = parseFloat(prestamoData.interes_pct) || 0;
+            const total = round2(monto + (monto * tasa / 100));
+            const numCuotas = parseInt(prestamoData.cuotas_count) || cuotasArray.length || 1;
+
+            // Cuotas con centavos exactos: la última absorbe el redondeo,
+            // así la suma de cuotas siempre es igual al total.
+            const cuotasFix = cuotasArray.map(c => ({ ...c, valor_cuota: round2(c.valor_cuota) }));
+            if (cuotasFix.length > 0) {
+                const sumaPrevias = round2(
+                    cuotasFix.slice(0, -1).reduce((s, c) => s + c.valor_cuota, 0)
+                );
+                cuotasFix[cuotasFix.length - 1].valor_cuota = round2(total - sumaPrevias);
+            }
+
             if (useLocalStorage()) {
-                let prestamos = await this.getPrestamos();
+                const prestamos = leerLS('sp_prestamos', []);
                 const newId = prestamoData.id || 'PR-' + Date.now();
-                const saldoCalculado = parseFloat(prestamoData.monto_total || prestamoData.monto || 0);
-                const numCuotasVal = prestamoData.num_cuotas || prestamoData.cuotas_count || prestamoData.plazo_meses || 1;
-                
-                const cuotasConEstado = cuotasArray.map(c => ({
-                    ...c,
-                    estado: c.estado || 'Pendiente'
-                }));
 
                 const fullPrestamo = {
-                    ...prestamoData,
                     id: newId,
-                    tasa_interes: prestamoData.tasa_interes || prestamoData.interes_pct || 0,
-                    interes_pct: prestamoData.interes_pct || prestamoData.tasa_interes || 0,
-                    monto_total: saldoCalculado,
-                    total: saldoCalculado,
-                    num_cuotas: numCuotasVal,
-                    cuotas_count: numCuotasVal,
-                    saldo_restante: saldoCalculado,
-                    saldo: saldoCalculado,
+                    codigo: prestamoData.codigo,
+                    cliente_id: prestamoData.cliente_id,
+                    monto,
+                    interes_pct: tasa,
+                    total,
+                    saldo: total,
+                    frecuencia: prestamoData.frecuencia,
+                    cuotas_count: numCuotas,
                     estado: 'Activo',
-                    cuotas: cuotasConEstado,
-                    cuotas_detalle: cuotasConEstado
+                    created_at: new Date().toISOString(),
+                    cuotas: cuotasFix.map(c => ({
+                        ...c,
+                        id: 'C-' + newId + '-' + c.num_cuota,
+                        estado: 'Pendiente'
+                    }))
                 };
 
                 prestamos.push(fullPrestamo);
-                localStorage.setItem('sp_prestamos', JSON.stringify(prestamos));
+                guardarLS('sp_prestamos', prestamos);
                 return fullPrestamo;
             }
 
+            let prestamoId = null;
             try {
-                const tasaVal = prestamoData.tasa_interes || prestamoData.interes_pct || 0;
-                const totalVal = prestamoData.monto_total || prestamoData.monto || 0;
-                const numCuotasVal = prestamoData.num_cuotas || prestamoData.cuotas_count || prestamoData.plazo_meses || 1;
-
-                // 1. Insertar préstamo en Supabase
+                // 1. Insertar el préstamo (solo columnas que existen en el schema)
                 const { data: pres, error: errPres } = await _supabase
                     .from('prestamos')
                     .insert([{
                         codigo: prestamoData.codigo,
                         cliente_id: prestamoData.cliente_id,
-                        monto: prestamoData.monto,
-                        tasa_interes: tasaVal,
-                        interes_pct: tasaVal,
-                        num_cuotas: numCuotasVal,
-                        cuotas_count: numCuotasVal,
+                        monto,
+                        interes_pct: tasa,
+                        total,
+                        saldo: total,
                         frecuencia: prestamoData.frecuencia,
-                        monto_total: totalVal,
-                        total: totalVal,
-                        saldo_restante: totalVal,
-                        saldo: totalVal,
+                        cuotas_count: numCuotas,
                         estado: 'Activo'
                     }])
                     .select();
-
                 if (errPres) throw errPres;
 
                 const prestamoCreado = pres[0];
-                const prestamoId = prestamoCreado.id;
+                prestamoId = prestamoCreado.id;
 
-                // 2. Insertar cuotas generadas
-                const cuotasMapped = cuotasArray.map(c => ({
+                // 2. Insertar el cronograma de cuotas
+                const cuotasMapped = cuotasFix.map(c => ({
                     prestamo_id: prestamoId,
-                    num_cuota: c.num_cuota || c.numero,
+                    num_cuota: c.num_cuota,
                     fecha_vencimiento: c.fecha_vencimiento,
-                    valor_cuota: c.valor_cuota || c.monto,
+                    valor_cuota: c.valor_cuota,
                     estado: 'Pendiente'
                 }));
 
-                const { error: errCuotas } = await _supabase
-                    .from('cuotas')
-                    .insert(cuotasMapped);
-
+                const { error: errCuotas } = await _supabase.from('cuotas').insert(cuotasMapped);
                 if (errCuotas) throw errCuotas;
 
                 return prestamoCreado;
             } catch (err) {
                 console.error('Error al crear préstamo:', err);
+                // Si falló al crear las cuotas, no dejar un préstamo huérfano
+                if (prestamoId) {
+                    await _supabase.from('prestamos').delete().eq('id', prestamoId);
+                }
                 throw err;
             }
         },
 
-        // --- PAGOS & COBROS ---
+        /**
+         * Desvincula los préstamos de un cliente antes de borrarlo, para que
+         * el ON DELETE CASCADE de la tabla clientes no arrastre préstamos,
+         * cuotas ni pagos ya históricos. Conserva el nombre en cliente_nombre.
+         */
+        async desvincularPrestamos(clienteId, nombreCliente) {
+            if (useLocalStorage()) {
+                const prestamos = leerLS('sp_prestamos', []);
+                prestamos.forEach(p => {
+                    if (String(p.cliente_id) === String(clienteId)) {
+                        p.cliente_id = null;
+                        p.cliente_nombre = nombreCliente;
+                    }
+                });
+                guardarLS('sp_prestamos', prestamos);
+                return;
+            }
+
+            try {
+                const { error } = await _supabase
+                    .from('prestamos')
+                    .update({ cliente_id: null, cliente_nombre: nombreCliente })
+                    .eq('cliente_id', clienteId);
+                if (error) throw error;
+            } catch (err) {
+                console.error('Error al desvincular préstamos del cliente:', err);
+                throw err;
+            }
+        },
+
+        // =====================================================
+        // PAGOS & COBROS
+        // =====================================================
         async getPagos() {
             if (useLocalStorage()) {
-                return JSON.parse(localStorage.getItem('sp_pagos')) || [];
+                return leerLS('sp_pagos', []);
             }
 
             try {
@@ -261,7 +339,6 @@ const StorageModule = (() => {
                     .from('pagos')
                     .select('*, prestamos(*, clientes(*))')
                     .order('created_at', { ascending: false });
-
                 if (error) throw error;
                 return data || [];
             } catch (err) {
@@ -271,108 +348,105 @@ const StorageModule = (() => {
         },
 
         /**
-         * Registra un nuevo pago, actualiza el estado de la(s) cuota(s) y el saldo del préstamo.
-         * @param {Object} pagoData - Datos del comprobante (monto, fecha, metodo, etc.)
-         * @param {string|number|Array} cuotasPagadasIds - ID o array de IDs/Números de las cuotas a marcar como pagadas
-         * @param {number} nuevoSaldoPrestamo - Nuevo saldo restante a guardar en el préstamo
-         * @param {Array} [cuotasActualizadas] - Opcional. Array completo de cuotas actualizadas en memoria
+         * Registra un pago y recalcula saldo, estado y cuotas del préstamo.
+         * pagoData: { num_recibo, prestamo_id, monto, fecha, metodo, observaciones }
+         * Devuelve el pago guardado (con su id real y created_at).
          */
-        async registrarPago(pagoData, cuotasPagadasIds, nuevoSaldoPrestamo, cuotasActualizadas) {
-            const listIds = Array.isArray(cuotasPagadasIds) ? cuotasPagadasIds : [cuotasPagadasIds];
-            const cuotaPrincipalId = listIds[0] || null;
-            const saldoFinal = Math.max(0, parseFloat(nuevoSaldoPrestamo));
+        async registrarPago(pagoData) {
+            const monto = round2(pagoData.monto);
+            if (!(monto > 0)) throw new Error('El monto del pago debe ser mayor a 0');
 
+            // ---------- Respaldo LocalStorage ----------
             if (useLocalStorage()) {
-                let pagos = await this.getPagos();
-                pagos.push(pagoData);
-                localStorage.setItem('sp_pagos', JSON.stringify(pagos));
+                const pagos = leerLS('sp_pagos', []);
+                const nuevoPago = {
+                    ...pagoData,
+                    monto,
+                    id: 'PAG-' + Date.now(),
+                    created_at: new Date().toISOString()
+                };
+                pagos.push(nuevoPago);
+                guardarLS('sp_pagos', pagos);
 
-                let prestamos = await this.getPrestamos();
-                let p = prestamos.find(x => String(x.id) === String(pagoData.prestamo_id));
-                
+                const prestamos = leerLS('sp_prestamos', []);
+                const p = prestamos.find(x => String(x.id) === String(pagoData.prestamo_id));
                 if (p) {
-                    p.saldo_restante = saldoFinal;
-                    p.saldo = saldoFinal;
-                    if (saldoFinal <= 0) p.estado = 'Finalizado';
+                    const cuotas = (p.cuotas || []).slice().sort((a, b) => a.num_cuota - b.num_cuota);
+                    const montos = pagos
+                        .filter(g => String(g.prestamo_id) === String(p.id))
+                        .map(g => g.monto);
+                    const r = calcularEstadoPrestamo(parseFloat(p.total) || 0, montos, cuotas);
 
-                    if (cuotasActualizadas) {
-                        p.cuotas = cuotasActualizadas;
-                        p.cuotas_detalle = cuotasActualizadas;
-                    } else if (p.cuotas || p.cuotas_detalle) {
-                        const lista = p.cuotas_detalle || p.cuotas;
-                        const idsStr = listIds.map(String);
-                        lista.forEach(cuota => {
-                            if (idsStr.includes(String(cuota.id)) || idsStr.includes(String(cuota.num_cuota))) {
-                                cuota.estado = 'Pagado';
-                                cuota.fecha_pago = pagoData.fecha;
-                            }
-                        });
-                    }
+                    p.saldo = r.saldo;
+                    p.estado = r.estado;
+                    (p.cuotas || []).forEach(c => {
+                        if (r.cubiertas.includes(c.id) && c.estado !== 'Pagado') {
+                            c.estado = 'Pagado';
+                            c.fecha_pago = pagoData.fecha;
+                        }
+                    });
                 }
-                
-                localStorage.setItem('sp_prestamos', JSON.stringify(prestamos));
-                return pagoData;
+                guardarLS('sp_prestamos', prestamos);
+                return nuevoPago;
             }
 
+            // ---------- Supabase ----------
             try {
-                // 1. Inserción del comprobante de pago
-                const pagoPayload = {
-                    num_recibo: pagoData.num_recibo,
-                    prestamo_id: pagoData.prestamo_id,
-                    cuota_id: cuotaPrincipalId,
-                    monto: parseFloat(pagoData.monto),
-                    fecha: pagoData.fecha,
-                    metodo: pagoData.metodo,
-                    observaciones: pagoData.observaciones
-                };
-
-                if (pagoData.sancion) {
-                    pagoPayload.sancion = pagoData.sancion;
-                }
-
+                // 1. Guardar el pago (sin id: Supabase genera el UUID)
                 const { data: pagoRes, error: errPago } = await _supabase
                     .from('pagos')
-                    .insert([pagoPayload])
+                    .insert([{
+                        num_recibo: pagoData.num_recibo,
+                        prestamo_id: pagoData.prestamo_id,
+                        monto,
+                        fecha: pagoData.fecha,
+                        metodo: pagoData.metodo,
+                        observaciones: pagoData.observaciones
+                    }])
                     .select();
-
                 if (errPago) throw errPago;
 
-                // 2. Marcar las cuotas correspondientes como Pagadas en Supabase
-                if (listIds.length > 0 && listIds[0] !== undefined) {
-                    const { error: errCuotas } = await _supabase
-                        .from('cuotas')
-                        .update({ 
-                            estado: 'Pagado',
-                            fecha_pago: pagoData.fecha 
-                        })
-                        .in('id', listIds);
+                // 2. Leer total, todos los pagos y las cuotas del préstamo
+                const { data: pres, error: e1 } = await _supabase
+                    .from('prestamos').select('total').eq('id', pagoData.prestamo_id).single();
+                if (e1) throw e1;
 
-                    // Si falló por ID, intentamos actualización por num_cuota
-                    if (errCuotas) {
-                        await _supabase
-                            .from('cuotas')
-                            .update({ 
-                                estado: 'Pagado',
-                                fecha_pago: pagoData.fecha 
-                            })
-                            .eq('prestamo_id', pagoData.prestamo_id)
-                            .in('num_cuota', listIds);
-                    }
+                const { data: pagosPrest, error: e2 } = await _supabase
+                    .from('pagos').select('monto').eq('prestamo_id', pagoData.prestamo_id);
+                if (e2) throw e2;
+
+                const { data: cuotas, error: e3 } = await _supabase
+                    .from('cuotas').select('id, valor_cuota, estado')
+                    .eq('prestamo_id', pagoData.prestamo_id)
+                    .order('num_cuota', { ascending: true });
+                if (e3) throw e3;
+
+                // 3. saldo = total - suma de pagos
+                const r = calcularEstadoPrestamo(
+                    parseFloat(pres.total) || 0,
+                    pagosPrest.map(g => g.monto),
+                    cuotas
+                );
+
+                // 4. Marcar como pagadas las cuotas nuevas que cubre lo abonado
+                const nuevas = cuotas
+                    .filter(c => r.cubiertas.includes(c.id) && c.estado !== 'Pagado')
+                    .map(c => c.id);
+
+                if (nuevas.length > 0) {
+                    const { error: e4 } = await _supabase
+                        .from('cuotas')
+                        .update({ estado: 'Pagado', fecha_pago: pagoData.fecha })
+                        .in('id', nuevas);
+                    if (e4) throw e4;
                 }
 
-                // 3. Actualizar el saldo restante y el estado del préstamo
-                const nuevoEstado = saldoFinal <= 0 ? 'Finalizado' : 'Activo';
-                
-                const { error: errPrestamo } = await _supabase
+                // 5. Guardar saldo y estado del préstamo
+                const { error: e5 } = await _supabase
                     .from('prestamos')
-                    .update({ 
-                        saldo_restante: saldoFinal, 
-                        saldo: saldoFinal, 
-                        estado: nuevoEstado 
-                    })
+                    .update({ saldo: r.saldo, estado: r.estado })
                     .eq('id', pagoData.prestamo_id);
-
-                if (errPrestamo) throw errPrestamo;
+                if (e5) throw e5;
 
                 return pagoRes[0];
             } catch (err) {
@@ -381,10 +455,12 @@ const StorageModule = (() => {
             }
         },
 
-        // --- AUDITORÍA ---
+        // =====================================================
+        // AUDITORÍA
+        // =====================================================
         async getAuditoria() {
             if (useLocalStorage()) {
-                return JSON.parse(localStorage.getItem('sp_auditoria')) || [];
+                return leerLS('sp_auditoria', []);
             }
             try {
                 const { data, error } = await _supabase
@@ -409,9 +485,9 @@ const StorageModule = (() => {
             };
 
             if (useLocalStorage()) {
-                let logs = await this.getAuditoria();
+                const logs = await this.getAuditoria();
                 logs.unshift(entry);
-                localStorage.setItem('sp_auditoria', JSON.stringify(logs));
+                guardarLS('sp_auditoria', logs);
                 return;
             }
 
